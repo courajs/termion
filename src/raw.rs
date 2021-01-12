@@ -24,6 +24,10 @@
 
 use std::io::{self, Write};
 use std::ops;
+use std::os::unix::io::{
+    RawFd,
+    AsRawFd,
+};
 
 use sys::attr::{get_terminal_attr, raw_terminal_attr, set_terminal_attr};
 use sys::Termios;
@@ -31,22 +35,26 @@ use sys::Termios;
 /// The timeout of an escape code control sequence, in milliseconds.
 pub const CONTROL_SEQUENCE_TIMEOUT: u64 = 100;
 
+/// A handle to a tty
+pub trait TTYHandle: Write + GetRawFd {}
+impl<W: Write + GetRawFd> TTYHandle for W {}
+
 /// A terminal restorer, which keeps the previous state of the terminal, and restores it, when
 /// dropped.
 ///
 /// Restoring will entirely bring back the old TTY state.
-pub struct RawTerminal<W: Write> {
+pub struct RawTerminal<W: TTYHandle> {
     prev_ios: Termios,
     output: W,
 }
 
-impl<W: Write> Drop for RawTerminal<W> {
+impl<W: TTYHandle> Drop for RawTerminal<W> {
     fn drop(&mut self) {
-        set_terminal_attr(&self.prev_ios).unwrap();
+        set_terminal_attr(self.output.get_raw_fd(), &self.prev_ios).unwrap();
     }
 }
 
-impl<W: Write> ops::Deref for RawTerminal<W> {
+impl<W: TTYHandle> ops::Deref for RawTerminal<W> {
     type Target = W;
 
     fn deref(&self) -> &W {
@@ -54,13 +62,13 @@ impl<W: Write> ops::Deref for RawTerminal<W> {
     }
 }
 
-impl<W: Write> ops::DerefMut for RawTerminal<W> {
+impl<W: TTYHandle> ops::DerefMut for RawTerminal<W> {
     fn deref_mut(&mut self) -> &mut W {
         &mut self.output
     }
 }
 
-impl<W: Write> Write for RawTerminal<W> {
+impl<W: TTYHandle> Write for RawTerminal<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.output.write(buf)
     }
@@ -75,9 +83,9 @@ mod unix_impl {
     use super::*;
     use std::os::unix::io::{AsRawFd, RawFd};
 
-    impl<W: Write + AsRawFd> AsRawFd for RawTerminal<W> {
+    impl<W: TTYHandle> AsRawFd for RawTerminal<W> {
         fn as_raw_fd(&self) -> RawFd {
-            self.output.as_raw_fd()
+            self.output.get_raw_fd()
         }
     }
 }
@@ -88,7 +96,7 @@ mod unix_impl {
 ///
 /// TTYs has their state controlled by the writer, not the reader. You use the writer to clear the
 /// screen, move the cursor and so on, so naturally you use the writer to change the mode as well.
-pub trait IntoRawMode: Write + Sized {
+pub trait IntoRawMode: TTYHandle + Sized {
     /// Switch to raw mode.
     ///
     /// Raw mode means that stdin won't be printed (it will instead have to be written manually by
@@ -97,14 +105,30 @@ pub trait IntoRawMode: Write + Sized {
     fn into_raw_mode(self) -> io::Result<RawTerminal<Self>>;
 }
 
-impl<W: Write> IntoRawMode for W {
+/// A wrapper around `std::os::unix::io::AsRawFd` to allow for references
+pub trait GetRawFd {
+    /// See `std::os::unix::io::AsRawFd`
+    fn get_raw_fd(&self) -> RawFd;
+}
+impl<F: AsRawFd> GetRawFd for &'_ F {
+    fn get_raw_fd(&self) -> RawFd {
+        self.as_raw_fd()
+    }
+}
+impl<F: AsRawFd> GetRawFd for &'_ mut F {
+    fn get_raw_fd(&self) -> RawFd {
+        self.as_raw_fd()
+    }
+}
+
+impl<W: Write + GetRawFd> IntoRawMode for W {
     fn into_raw_mode(self) -> io::Result<RawTerminal<W>> {
-        let mut ios = get_terminal_attr()?;
+        let mut ios = get_terminal_attr(self.get_raw_fd())?;
         let prev_ios = ios;
 
         raw_terminal_attr(&mut ios);
 
-        set_terminal_attr(&ios)?;
+        set_terminal_attr(self.get_raw_fd(), &ios)?;
 
         Ok(RawTerminal {
             prev_ios: prev_ios,
@@ -113,18 +137,18 @@ impl<W: Write> IntoRawMode for W {
     }
 }
 
-impl<W: Write> RawTerminal<W> {
+impl<W: Write + GetRawFd> RawTerminal<W> {
     /// Temporarily switch to original mode
     pub fn suspend_raw_mode(&self) -> io::Result<()> {
-        set_terminal_attr(&self.prev_ios)?;
+        set_terminal_attr(self.get_raw_fd(), &self.prev_ios)?;
         Ok(())
     }
 
     /// Temporarily switch to raw mode
     pub fn activate_raw_mode(&self) -> io::Result<()> {
-        let mut ios = get_terminal_attr()?;
+        let mut ios = get_terminal_attr(self.get_raw_fd())?;
         raw_terminal_attr(&mut ios);
-        set_terminal_attr(&ios)?;
+        set_terminal_attr(self.get_raw_fd(), &ios)?;
         Ok(())
     }
 }

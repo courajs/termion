@@ -47,15 +47,15 @@ mod test {
 
     #[test]
     fn test_get_terminal_attr() {
-        sys::attr::get_terminal_attr().unwrap();
-        sys::attr::get_terminal_attr().unwrap();
-        sys::attr::get_terminal_attr().unwrap();
+        sys::attr::get_terminal_attr(1).unwrap();
+        sys::attr::get_terminal_attr(1).unwrap();
+        sys::attr::get_terminal_attr(1).unwrap();
     }
 
     #[test]
     fn test_set_terminal_attr() {
-        let ios = sys::attr::get_terminal_attr().unwrap();
-        sys::attr::set_terminal_attr(&ios).unwrap();
+        let ios = sys::attr::get_terminal_attr(1).unwrap();
+        sys::attr::set_terminal_attr(1, &ios).unwrap();
     }
 
     #[test]

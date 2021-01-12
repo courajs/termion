@@ -120,7 +120,7 @@ pub trait TermRead {
     ///
     /// EOT and ETX will abort the prompt, returning `None`. Newline or carriage return will
     /// complete the input.
-    fn read_passwd<W: Write>(&mut self, writer: &mut W) -> io::Result<Option<String>> {
+    fn read_passwd<W: IntoRawMode>(&mut self, writer: W) -> io::Result<Option<String>> {
         let _raw = writer.into_raw_mode()?;
         self.read_line()
     }
